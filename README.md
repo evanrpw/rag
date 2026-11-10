@@ -13,6 +13,7 @@ your question --> embed --> find the 3 closest chunks --> Llama answers from the
 | `ingest.py` | Splits your documents into chunks and stores them in `chroma_db/` |
 | `rag.py` | Retrieval and answer generation |
 | `server.py` | The web server (serves `public/index.html` and `/api/chat`) |
+| `cli.py` | Run headless, so you don't need to access browser |
 | `.env` | Settings (created by the setup script from `.env.example`) |
 
 ## 0. Don't run this on the login node
@@ -23,7 +24,7 @@ refuse to run there. You need a Slurm session first. Pick one of these:
 **Option A: Open OnDemand (easiest for viewing the web page)**
 Log in at https://ondemand.rc.unc.edu/ and start a Longleaf Desktop session. Open a terminal
 inside it and follow the steps below. You can open a web browser inside the same desktop,
-so no SSH tunnel is needed.
+so no SSH tunnel is needed. You may want to request a GPU session, or at least more CPU memory, to avoid running OOM.
 
 **Option B: SSH + interactive session**
 ```bash
