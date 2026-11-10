@@ -1,0 +1,7 @@
+flask
+chromadb
+openai
+pypdf
+python-dotenv
+sentence-transformers
+pysqlite3-binary; sys_platform == "linux"

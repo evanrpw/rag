@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Simple RAG</title>
+  <style>
+    :root {
+      --bg: #f6f6f6;
+      --fg: black;
+      --fg-link: #137752;
+    }
+    body {
+      margin: 40px auto;
+      max-width: 650px;
+      padding: 0 20px;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: serif;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: normal;
+      border-bottom: 1.5px solid var(--fg-link);
+      padding-bottom: 5px;
+    }
+    textarea {
+      width: 100%;
+      height: 70px;
+      box-sizing: border-box;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--fg);
+      padding: 8px;
+      font-family: inherit;
+      font-size: 15px;
+      margin: 15px 0 10px 0;
+    }
+    textarea:focus {
+      outline: 1.5px solid var(--fg-link);
+    }
+    button {
+      background: var(--bg);
+      color: var(--fg-link);
+      border: 1px solid var(--fg-link);
+      padding: 4px 12px;
+      font-family: inherit;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: var(--fg);
+      color: var(--bg);
+    }
+    .status {
+      font-style: italic;
+      color: var(--fg-link);
+      margin-left: 10px;
+    }
+    .result {
+      margin-top: 30px;
+      display: none;
+    }
+    .source {
+      border-left: 2px solid var(--fg-link);
+      padding-left: 10px;
+      margin: 10px 0;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Simple RAG</h1>
+  <textarea id="q" placeholder="Ask a question..."></textarea>
+  <br>
+  <button onclick="ask()">Submit</button>
+  <span id="status" class="status"></span>
+
+  <div id="out" class="result">
+    <h3>Answer</h3>
+    <p id="ans" style="white-space: pre-wrap;"></p>
+    <h3>Sources</h3>
+    <div id="src"></div>
+  </div>
+
+  <script>
+    async function ask() {
+      const q = document.getElementById('q').value.trim();
+      if (!q) return;
+      document.getElementById('status').innerText = 'Loading...';
+      document.getElementById('out').style.display = 'none';
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q })
+        });
+        const data = await res.json();
+        document.getElementById('ans').innerText = data.answer || '';
+        // Escape text: retrieved chunks are untrusted and must not run as HTML.
+        const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+        document.getElementById('src').innerHTML = (data.sources || []).map((s, i) =>
+          `<div class="source"><strong>[${i + 1}] ${esc(s.source)}</strong><br>${esc(s.content)}</div>`
+        ).join('');
+        document.getElementById('out').style.display = 'block';
+      } catch (e) {
+        alert('Error: ' + e.message);
+      } finally {
+        document.getElementById('status').innerText = '';
+      }
+    }
+  </script>
+</body>
+</html>
