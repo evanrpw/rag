@@ -23,11 +23,7 @@ your question --> embed --> find the 3 closest chunks --> Llama answers from the
 | `ingest.py` | Splits your documents into chunks and stores them in `chroma_db/` |
 | `rag.py` | Retrieval and answer generation |
 | `server.py` | The web server (serves `public/index.html` and `/api/chat`) |
-<<<<<<< Updated upstream
-| `cli.py` | Run headless, so you don't need to access browser |
-=======
 | `cli.py` | The terminal front end, started by `bash start.sh cli` |
->>>>>>> Stashed changes
 | `.env` | Settings (created by the setup script from `.env.example`) |
 
 ## 0. Get a Slurm session (don't run on the login node)
