@@ -22,6 +22,7 @@ except ImportError:
     pass
 
 import chromadb
+import openai
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -47,8 +48,11 @@ if PROVIDER == "local":
     CHAT_MODEL = os.getenv("LOCAL_LLM_MODEL", "llama3.2:3b")
     embedder = SentenceTransformer(EMBEDDING_MODEL)  # downloads on first use, then cached
     chat_client = OpenAI(
-        base_url=os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1"),
+        # start.sh sets LOCAL_LLM_BASE_URL to the port Ollama is really using.
+        base_url=os.getenv("LOCAL_LLM_BASE_URL", "http://127.0.0.1:11500/v1"),
         api_key=os.getenv("LOCAL_LLM_API_KEY") or "not-needed",  # client requires a value
+        timeout=180,     # fail with a clear error instead of waiting 10 minutes
+        max_retries=0,   # no silent retries
     )
 elif PROVIDER == "azure":
     from openai import AzureOpenAI
@@ -80,6 +84,8 @@ collection = chroma.get_or_create_collection(
     COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
 )
 print(f"[rag] provider={PROVIDER} embeddings={EMBEDDING_MODEL} chat={CHAT_MODEL} collection={COLLECTION_NAME}")
+if PROVIDER == "local":
+    print(f"[rag] llm_url={chat_client.base_url}")
 
 
 def embed(texts):
@@ -126,15 +132,25 @@ def generate_response(user_query, **retrieve_options):
         f"[{i + 1}] ({d['source']})\n{d['content']}" for i, d in enumerate(documents)
     )
 
-    completion = chat_client.chat.completions.create(
-        model=CHAT_MODEL,
-        temperature=0.2,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"<documents>\n{context}\n</documents>\n\nQuestion: {user_query}",
-            },
-        ],
-    )
+    # Cap the answer length on the local model so a slow CPU can't run for minutes.
+    extra = {"max_tokens": 400} if PROVIDER == "local" else {}
+    try:
+        completion = chat_client.chat.completions.create(
+            model=CHAT_MODEL,
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"<documents>\n{context}\n</documents>\n\nQuestion: {user_query}",
+                },
+            ],
+            **extra,
+        )
+    except openai.APIConnectionError as e:  # includes timeouts
+        raise RuntimeError(
+            f"No answer from the model at {chat_client.base_url}. Is 'bash start.sh' "
+            "running in this same session? If it is, the model may be overloaded: "
+            "check ollama.log."
+        ) from e
     return {"answer": completion.choices[0].message.content, "sources": documents}

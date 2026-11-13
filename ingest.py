@@ -1,7 +1,8 @@
 """Load .txt / .pdf files from data/ into the local ChromaDB.
 
 Usage:
-    python ingest.py            # add new files, update changed files, skip unchanged files
+    python ingest.py            # add new files, update changed files, skip unchanged files,
+                                # and forget files you deleted from data/
     python ingest.py --reset    # wipe this embedding model's collection first, then ingest
 
 Updates are crash-safe: a changed file's chunks are overwritten in place (upsert) and only
@@ -23,8 +24,8 @@ OVERLAP = 200
 
 
 def extract_text(path):
-    if path.endswith(".txt"):
-        with open(path, encoding="utf-8") as f:
+    if path.lower().endswith(".txt"):
+        with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()
     reader = pypdf.PdfReader(path)
     return "\n".join(page.extract_text() or "" for page in reader.pages)
@@ -47,6 +48,8 @@ def fingerprint(text):
 
 def ingest_file(path, source):
     text = extract_text(path)
+    if not text.strip():
+        print(f"  -> {source}: WARNING no text found (scanned PDF?). Nothing to search.")
     file_hash = fingerprint(text)
 
     # What is already stored for this file?
@@ -91,17 +94,38 @@ def ingest_file(path, source):
     print(f"  -> {source}: {len(chunks)} chunk(s) stored, {len(stale)} stale removed.")
 
 
+def forget_deleted(seen_sources):
+    """Remove chunks whose file is no longer in data/, so deleted files stop answering."""
+    stored = collection.get(include=["metadatas"])
+    gone_ids, gone_sources = [], set()
+    for chunk_id, meta in zip(stored["ids"], stored["metadatas"]):
+        if meta.get("source") not in seen_sources:
+            gone_ids.append(chunk_id)
+            gone_sources.add(meta.get("source"))
+    if gone_ids:
+        collection.delete(ids=gone_ids)
+        for s in sorted(gone_sources):
+            print(f"Removed deleted file from the database: {s}")
+
+
 def ingest_directory(directory="data"):
     if not os.path.exists(directory):
         print(f"Directory '{directory}' not found. Create it and add .txt or .pdf files.")
-        return
+        return None
+    seen = set()
     for root, _, files in os.walk(directory):
         for name in sorted(files):
-            if name.endswith((".txt", ".pdf")):
+            if name.lower().endswith((".txt", ".pdf")):
                 path = os.path.join(root, name)
                 rel_path = os.path.relpath(path, directory)
+                seen.add(rel_path)  # counted even if it fails, so old chunks are kept
                 print(f"Processing: {rel_path}")
-                ingest_file(path, rel_path)
+                try:
+                    ingest_file(path, rel_path)
+                except Exception as e:
+                    print(f"  -> {rel_path}: FAILED ({e}). Skipped; fix the file and re-run.")
+    forget_deleted(seen)
+    return seen
 
 
 if __name__ == "__main__":
@@ -110,5 +134,8 @@ if __name__ == "__main__":
         if existing_ids:
             collection.delete(ids=existing_ids)
         print(f"Cleared {len(existing_ids)} existing chunk(s) via --reset.")
-    ingest_directory()
-    print("\nIngestion complete!")
+    files = ingest_directory()
+    if files is not None:
+        print(f"\nIngestion complete! Database now holds {collection.count()} chunk(s) from {len(files)} file(s).")
+        if not files:
+            print("No .txt or .pdf files found in data/. Add some and re-run.")

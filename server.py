@@ -1,5 +1,7 @@
 """Tiny web server: serves public/index.html and a POST /api/chat endpoint."""
 
+import os
+
 from flask import Flask, jsonify, request
 
 from rag import generate_response
@@ -21,9 +23,13 @@ def chat():
         return jsonify(generate_response(query))
     except Exception as e:
         app.logger.exception("RAG pipeline failed")
-        return jsonify({"error": f"Failed to process query: {e}"}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
-    print("RAG app running at http://localhost:3001")
-    app.run(port=3001, debug=True)
+    # start.sh picks a free port and passes it in PORT. debug stays off: it loads the
+    # embedding model twice, leaves a reloader process behind, and exposes a debugger
+    # on a node shared with other users.
+    port = int(os.environ.get("PORT", 3001))
+    print(f"RAG app running at http://localhost:{port}")
+    app.run(host="127.0.0.1", port=port, debug=False)

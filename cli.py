@@ -1,28 +1,27 @@
-"""CLI frontend for headless RAG queries."""
+"""CLI frontend for headless RAG queries. Run it with:  bash start.sh cli"""
 
-import sys
+import time
+
 from rag import generate_response
 
+
 def main():
-    print("RAG CLI Frontend started. (Type 'exit' or 'quit' to stop, Ctrl+C to abort)")
-    
+    print("RAG CLI started. Type a question, or 'exit' to stop (Ctrl+C also works).")
+
     while True:
         try:
-            # 1. Get user input
             query = input("\nQuery: ").strip()
             if not query:
                 continue
-            if query.lower() in ["exit", "quit"]:
+            if query.lower() in ("exit", "quit"):
                 print("Exiting...")
                 break
 
-            # 2. Call the RAG pipeline directly
+            print("Thinking...")
+            start = time.time()
             result = generate_response(query)
-            
-            # 3. Display the answer
-            print(f"\nAnswer:\n{result['answer']}")
-            
-            # 4. (Optional) Display the sources used
+            print(f"\nAnswer ({time.time() - start:.1f}s):\n{result['answer']}")
+
             if result.get("sources"):
                 print("\nSources cited:")
                 for i, doc in enumerate(result["sources"]):
@@ -32,7 +31,8 @@ def main():
             print("\nExiting...")
             break
         except Exception as e:
-            print(f"\nError processing query: {e}")
+            print(f"\nError: {e}")
+
 
 if __name__ == "__main__":
     main()

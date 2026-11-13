@@ -1,122 +1,84 @@
 #!/bin/bash
 # First-time RAG setup for Longleaf / Hickory.
-# Run with:  bash setup_rag.sh   (or: source setup_rag.sh)
+#   bash setup_rag.sh            set up (or finish setting up); finished parts are reused
+#   bash setup_rag.sh --rebuild  throw away the Python environment and build it again
+#
+# There is exactly one Python environment ($WORK/rag-venv) and one container
+# ($WORK/ollama.sif). To refresh the container, delete ollama.sif and re-run setup.
 
-# Exit helper that works whether the script is sourced or executed
-die() { echo "Error: $*" >&2; return 1 2>/dev/null || exit 1; }
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-echo "Starting First-Time RAG Setup..."
+# Instructors: pin this to the version you tested (e.g. docker://ollama/ollama:0.12.0)
+OLLAMA_IMAGE=${OLLAMA_IMAGE:-docker://ollama/ollama:latest}
+BASE_MODEL=llama3.2:3b
+EMBED_MODEL=all-MiniLM-L6-v2
+VENV="$WORK/rag-venv"
 
-# ---------------------------------------------------------------
-# 0. Slurm check + locate your project folder (/work/... or /hickory/users/...)
-# ---------------------------------------------------------------
-if [ -z "$SLURM_JOB_ID" ] && [ -z "$ALLOW_LOGIN_NODE" ]; then
-  echo "This script is heavy and must not run on the login node."
-  echo "Start an interactive session first, then re-run this script:"
-  echo "  srun -t 2:00:00 -p interact -n 1 --cpus-per-task=4 --mem=16g --pty /bin/bash"
-  echo "(Or use an Open OnDemand session.)"
-  die "not inside a Slurm session"
+echo "Starting RAG setup in $RAG_DIR"
+cd "$RAG_DIR" || fail "cannot enter $RAG_DIR"
+[ -f requirements.txt ] || fail "requirements.txt not found in $RAG_DIR."
+
+echo "1/5 Python environment (first time takes 15-20 minutes; pip output is quiet, so be patient)..."
+load_modules default
+echo "    Python: $(python --version 2>&1) at $(command -v python)"
+
+if [ "$1" = "--rebuild" ]; then
+  echo "    --rebuild: removing the old environment."
+  rm -rf "$VENV"
 fi
-
-WORK=""
-for d in /work/users/*/*/"$USER" /hickory/users/*/*/"$USER"; do
-  if [ -d "$d/rag" ]; then WORK=$d; break; fi
-done
-if [ -z "$WORK" ]; then
-  echo "Couldn't find a 'rag' folder. Looked in:"
-  ls -d /work/users/*/*/"$USER" /hickory/users/*/*/"$USER" 2>/dev/null | sed 's/^/  /'
-  die "Upload the project files to a folder named 'rag' inside one of the paths above."
-fi
-export WORK
-echo "Using work directory: $WORK"
-
-cd "$WORK/rag" || die "Please upload the project files to $WORK/rag first."
-[ -f requirements.txt ] || die "requirements.txt not found in $WORK/rag."
-
-# ---------------------------------------------------------------
-# 1. Cache locations (keep everything out of the small home quota)
-# ---------------------------------------------------------------
-export HF_HOME=$WORK/.cache/huggingface
-export PIP_CACHE_DIR=$WORK/.cache/pip
-export APPTAINER_CACHEDIR=$WORK/.cache/apptainer
-export APPTAINER_TMPDIR=$WORK/.cache/apptainer/tmp
-mkdir -p "$HF_HOME" "$PIP_CACHE_DIR" "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
-
-# ---------------------------------------------------------------
-# 2. Python environment
-# ---------------------------------------------------------------
-echo "1. Building Python Environment (This may take 15-20 minutes)..."
-module purge
-module load python apptainer || die "could not load python/apptainer modules."
-
-python -m venv "$WORK/rag-venv" || die "could not create virtual environment."
-source "$WORK/rag-venv/bin/activate"
-
-pip install -v --no-cache-dir -r requirements.txt || die "pip install failed."
-
-# ---------------------------------------------------------------
-# 3. Ollama container
-# ---------------------------------------------------------------
-echo "2. Downloading Ollama Server Container..."
-apptainer pull "$WORK/ollama.sif" docker://ollama/ollama || die "apptainer pull failed."
-
-# ---------------------------------------------------------------
-# 4. Start Ollama and pull the model
-# ---------------------------------------------------------------
-echo "3. Starting backend to download the LLM..."
-export OLLAMA_MODELS=$WORK/ollama-models
-export OLLAMA_HOST=127.0.0.1:11500
-export OLLAMA_SIF=$WORK/ollama.sif
-mkdir -p "$OLLAMA_MODELS"
-
-run_ollama() {
-  apptainer exec --nv --bind "$WORK" \
-    --env OLLAMA_HOST="$OLLAMA_HOST" \
-    --env OLLAMA_MODELS="$OLLAMA_MODELS" \
-    "$OLLAMA_SIF" ollama "$@"
-}
-
-run_ollama serve > ollama.log 2>&1 &
-OLLAMA_PID=$!
-
-# Wait up to ~2 minutes for the server to come up
-ready=0
-for i in {1..60}; do
-  if curl -s "http://$OLLAMA_HOST" >/dev/null 2>&1; then ready=1; break; fi
-  # stop waiting early if the server process already died
-  kill -0 "$OLLAMA_PID" 2>/dev/null || break
-  sleep 2
-done
-if [ "$ready" -ne 1 ]; then
-  echo "---- last lines of ollama.log ----"
-  tail -n 20 ollama.log
-  kill "$OLLAMA_PID" 2>/dev/null
-  die "Ollama server did not start."
-fi
-
-echo "4. Downloading Llama 3.2 Model (2GB)..."
-run_ollama pull llama3.2:3b || {
-  kill "$OLLAMA_PID" 2>/dev/null
-  die "model download failed."
-}
-
-# Stop the temporary server so it doesn't keep running on the login node
-kill "$OLLAMA_PID" 2>/dev/null
-wait "$OLLAMA_PID" 2>/dev/null
-
-# ---------------------------------------------------------------
-# 5. Config
-# ---------------------------------------------------------------
-echo "5. Configuring environment variables..."
-if [ -f .env ]; then
-  echo "   .env already exists, leaving it alone."
+if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c 'import sys' >/dev/null 2>&1; then
+  echo "    Reusing the existing environment."
 else
-  cp .env.example .env || die "could not copy .env.example (is it uploaded?)."
+  [ -e "$VENV" ] && echo "    The existing environment is broken; rebuilding it."
+  rm -rf "$VENV"
+  python -m venv "$VENV" || fail "could not create the virtual environment."
 fi
+
+# Remember which Python module built the venv, so start.sh loads the very same one.
+PYMOD=$(module -t list 2>&1 | grep -i '^python' | head -n 1)
+[ -n "$PYMOD" ] && echo "$PYMOD" > "$VENV/.python-module"
+
+activate_venv
+pip install -q --no-cache-dir -r requirements.txt || fail "pip install failed."
+python -c "import flask, rag, openai, pypdf, dotenv, sentence_transformers" \
+  || fail "packages installed but could not be imported. Try: bash setup_rag.sh --rebuild"
+
+echo "2/5 Embedding model (so the first 'ingest' needs no network)..."
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('$EMBED_MODEL')" \
+  || fail "could not download the embedding model."
+
+echo "3/5 Ollama container..."
+if [ -f "$OLLAMA_SIF" ]; then
+  echo "    already downloaded, skipping."
+else
+  apptainer pull "$OLLAMA_SIF" "$OLLAMA_IMAGE" || fail "apptainer pull failed."
+fi
+
+echo "4/5 Language model $BASE_MODEL (about 2 GB; skipped if already downloaded)..."
+export OLLAMA_HOST=127.0.0.1:$(pick_port 11500)
+build_apptainer_cmd
+"${APPT[@]}" ollama serve > ollama.log 2>&1 &
+OLLAMA_PID=$!
+cleanup() { pkill -P "$OLLAMA_PID" 2>/dev/null; kill "$OLLAMA_PID" 2>/dev/null; wait "$OLLAMA_PID" 2>/dev/null; }
+trap cleanup EXIT
+if ! wait_for_ollama "$OLLAMA_PID"; then
+  echo "---- last lines of ollama.log ----"; tail -n 20 ollama.log
+  fail "Ollama server did not start."
+fi
+"${APPT[@]}" ollama pull "$BASE_MODEL" || fail "model download failed."
+cleanup
+trap - EXIT
+
+echo "5/5 Settings..."
+if [ -f .env ]; then
+  echo "    .env already exists, leaving it alone."
+else
+  cp .env.example .env || fail "could not copy .env.example."
+fi
+mkdir -p data
 
 echo
-echo "Setup Complete!"
-echo "To initialize the vector database, run:"
-echo "  source $WORK/rag-venv/bin/activate"
-echo "  cd $WORK/rag"
-echo "  python ingest.py"
+echo "Setup complete! Next:"
+echo "  1. Put .txt / .pdf files in $RAG_DIR/data/"
+echo "  2. bash start.sh ingest"
+echo "  3. bash start.sh        (web page)   or   bash start.sh cli   (terminal)"

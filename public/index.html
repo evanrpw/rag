@@ -8,6 +8,7 @@
       --bg: #f6f6f6;
       --fg: black;
       --fg-link: #137752;
+      --err: #a12020;
     }
     body {
       margin: 40px auto;
@@ -49,14 +50,22 @@
       font-size: 15px;
       cursor: pointer;
     }
-    button:hover {
+    button:hover:not(:disabled) {
       background: var(--fg);
       color: var(--bg);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: wait;
     }
     .status {
       font-style: italic;
       color: var(--fg-link);
       margin-left: 10px;
+    }
+    .error {
+      color: var(--err);
+      font-style: italic;
     }
     .result {
       margin-top: 30px;
@@ -72,24 +81,36 @@
 </head>
 <body>
   <h1>Simple RAG</h1>
-  <textarea id="q" placeholder="Ask a question..."></textarea>
+  <textarea id="q" placeholder="Ask a question... (Ctrl+Enter to submit)"></textarea>
   <br>
-  <button onclick="ask()">Submit</button>
+  <button id="btn" onclick="ask()">Submit</button>
   <span id="status" class="status"></span>
 
   <div id="out" class="result">
     <h3>Answer</h3>
     <p id="ans" style="white-space: pre-wrap;"></p>
-    <h3>Sources</h3>
+    <h3 id="src-head">Sources</h3>
     <div id="src"></div>
   </div>
 
   <script>
+    document.getElementById('q').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ask();
+    });
+
     async function ask() {
       const q = document.getElementById('q').value.trim();
       if (!q) return;
-      document.getElementById('status').innerText = 'Loading...';
+      const btn = document.getElementById('btn');
+      const status = document.getElementById('status');
+      const ans = document.getElementById('ans');
+      const t0 = Date.now();
+      btn.disabled = true;
       document.getElementById('out').style.display = 'none';
+      // Show elapsed seconds, so a slow CPU answer doesn't look like a frozen page.
+      const tick = () => { status.innerText = `Thinking... ${Math.round((Date.now() - t0) / 1000)}s`; };
+      tick();
+      const timer = setInterval(tick, 1000);
 
       try {
         const res = await fetch('/api/chat', {
@@ -98,17 +119,23 @@
           body: JSON.stringify({ query: q })
         });
         const data = await res.json();
-        document.getElementById('ans').innerText = data.answer || '';
+        const failed = !res.ok || data.error;
+        ans.className = failed ? 'error' : '';
+        ans.innerText = failed ? ('Error: ' + (data.error || res.statusText)) : (data.answer || '');
         // Escape text: retrieved chunks are untrusted and must not run as HTML.
         const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
-        document.getElementById('src').innerHTML = (data.sources || []).map((s, i) =>
+        const sources = failed ? [] : (data.sources || []);
+        document.getElementById('src-head').style.display = sources.length ? 'block' : 'none';
+        document.getElementById('src').innerHTML = sources.map((s, i) =>
           `<div class="source"><strong>[${i + 1}] ${esc(s.source)}</strong><br>${esc(s.content)}</div>`
         ).join('');
         document.getElementById('out').style.display = 'block';
       } catch (e) {
-        alert('Error: ' + e.message);
+        alert('Could not reach the server: ' + e.message + '\nIs "bash start.sh" still running?');
       } finally {
-        document.getElementById('status').innerText = '';
+        clearInterval(timer);
+        status.innerText = '';
+        btn.disabled = false;
       }
     }
   </script>
